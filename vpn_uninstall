@@ -1,0 +1,282 @@
+#!/usr/bin/env bash
+##########################################################################
+#           Copyright (c) 2001, Cisco Systems, All Rights Reserved
+###########################################################################
+#
+#  File:    vpn_uninstall
+#  Date:    06/15/2001
+#
+###########################################################################
+#
+# linux vpn client installation script.
+#
+###########################################################################
+
+#
+# Initialization
+#
+PATH="${PATH}:/sbin:/usr/sbin:/usr/local/sbin"
+WHOAMI=`id | sed -e 's/(.*//'`
+if [ "$WHOAMI" != "uid=0" ] ; then
+	echo "Sorry, you need super user access to run this script."
+	exit 1
+fi
+
+#
+#  Print abort message on interupt.
+#
+trap 'echo; echo "Oh no! UnInstall Aborted!"; exit 1' 1 2 3 15
+
+#
+# Assign a default value if we don't have it
+#
+if [ -z "$LINKDIR" ]; then
+	LINKDIR=/usr/local/bin
+fi
+
+MODULEDIR=/lib/modules/`uname -r`/CiscoVPN
+PKGNAME="cisco-vpnclient"
+VPNGRUP="ciscovpn"
+OLD_CFGDIR="/etc/CiscoSystemsVPNClient"
+CFGDIR="/etc/opt/${PKGNAME}"
+PKGDIR="/opt/${PKGNAME}"
+
+
+#
+# Check for existence and validity of chkconfig
+#
+if [ "0" = `chkconfig --list | wc -l` ]; then
+	CHKCONFIG=""
+else
+    CHKCONFIG="chkconfig"
+fi
+
+#
+
+
+if [ -d /etc/init.d ]; then
+    INIT_D="/etc/init.d"
+elif [ -d /etc/rc.d/init.d ]; then
+    INIT_D="/etc/rc.d/init.d"
+elif [ -d /etc/rc.d ]; then
+    INIT_D="/etc/rc.d"
+else
+    INIT_D=""
+fi
+
+if [ -d /etc/rc3.d ]; then
+    RC_D="/etc"
+elif [ -d /etc/rc.d/rc3.d ]; then
+    RC_D="/etc/rc.d"
+else
+    RC_D=""
+fi
+
+#
+# UnInstall Start
+#
+
+echo "Cisco Systems VPN Client Version BUILDVER_STRING Linux UnInstaller"
+echo "Copyright (C) 1998-2001 Cisco Systems, Inc. All Rights Reserved."
+
+
+
+#
+# Set up to do reads with possible shell escape and default assignment
+# myread()
+#
+
+myread() {
+	case "$fastread" in
+		yes) ans=''; echo " " ;;
+		*) ans='!';;
+	esac
+
+	while expr "X$ans" : "X!" >/dev/null; do
+		read ans
+		case "$ans" in
+			!)
+				sh
+				echo " "
+				echo $n "$rp $c"
+				;;
+			!*)
+				set `expr "X$ans" : "X!\(.*\)$"`
+				sh -c "$*"
+				echo " "
+				echo $n "$rp $c"
+				;;
+			esac
+	done
+
+	rp='Your answer:'
+
+	case "$ans" in
+		'') ans="$dflt";;
+	esac
+}
+
+
+#
+# Confirm that user is sure that he/she wishes to uninstall the Client
+#
+
+got_confirm=false
+
+while [ "$got_confirm" = "false" ]; do
+	dflt=no
+	rp="Are you sure that you wish to uninstall the VPN Client?  [$dflt]"
+	printf "\n%s" "$rp "
+	myread
+
+	the_uninstallconfirm=$ans
+
+	case "$the_uninstallconfirm" in
+	y* | Y*)
+		got_confirm=true
+		;;
+	n* | N* )
+	 	echo "Uninstall Aborted"
+		exit 1
+		;;
+	*)
+		;;
+	esac
+done
+
+got_confirm=false
+
+while [ "$got_confirm" = "false" ]; do
+	dflt=no
+	rp="Do you wish to remove all existing profiles and certificates?  [$dflt]"
+	printf "\n%s" "$rp "
+	myread
+
+	clean_profiles=$ans
+
+	case "$clean_profiles" in
+	y* | Y*)
+		got_confirm=true
+		clean_profiles=true
+		echo " - Existing Profiles and Certificates will be removed"
+		;;
+	n* | N* )
+		got_confirm=true
+		clean_profiles=false
+		echo " - Existing Profiles and Certificates will be preserved"
+		;;
+	*)
+		;;
+	esac
+done
+
+
+if [ ! -f "$LINKDIR/vpnclient" ]; then
+	dflt=$LINKDIR
+	rp="Directory where binaries were installed [$dflt]"
+	printf "\n%s" "$rp "
+	myread
+	LINKDIR=$ans
+	if [ ! -d "$LINKDIR" ]; then
+		echo " - Binary uninstall directory does not exist ${LINKDIR}"
+        echo " - there may be invalid symlinks with the following names"
+        echo " - vpnclient cisco_cert_mgr ipseclog"
+	fi
+fi
+
+echo " - Binary uninstall directory set to ${LINKDIR}"
+
+if [ -z "$INIT_D" ]; then
+    rp="Directory containing init scripts:"
+    printf "\n%s" "$rp "
+    myread
+    INIT_D=$ans
+    if [ ! -d "$INIT_D" ]; then
+        echo "Directory \"$INIT_D\" doesn't exist"
+        echo " - Please determine the correct directory and re-run"
+        exit 1
+    fi
+fi
+if [ -z "$CHKCONFIG" -a -z "$RC_D" ]; then
+    rp="Directory containing runlevel directories (rcX.d):"
+    printf "\n%s" "$rp "
+    myread
+    RC_D=$ans
+    if [ ! -d "$RC_D" ]; then
+        echo "Directory \"$RC_D\" doesn't exist"
+        echo " - Please determine the correct directory and re-run"
+        exit 1
+	fi
+fi
+
+printf "\n"
+
+
+#
+# Check for files and directories and clean up
+#
+echo "Cleaning up installed files and directory...."
+
+if [ -f "$INIT_D/vpnclient_init" ]; then
+	sh $INIT_D/vpnclient_init stop
+	echo "Stopped: $INIT_D/vpnclient_init (VPN init script)"
+fi
+if [ -n "$LINKDIR" ]; then
+    for file in vpnclient ipseclog cisco_cert_mgr; do
+        if [ -f "$LINKDIR/${file}" ]; then
+	        rm -f "$LINKDIR/${file}"
+	        echo "Removed: ${LINKDIR}/${file}"
+        fi
+    done
+fi
+if [ -d "$PKGDIR" -a "$PKGDIR" != "/" ]; then
+    rm -rf $PKGDIR
+    echo "Removed: ${PKGDIR} (package install directory)"
+fi
+
+if [ -n "$CHKCONFIG" ]; then
+    $CHKCONFIG --del vpnclient_init
+else
+    if [ -L "$RC_D/rc3.d/S85vpnclient_init" ]; then
+	rm $RC_D/rc3.d/S85vpnclient_init
+	echo "Removed: $RC_D/rc3.d/S85vpnclient_init (VPN rc3.d link)"
+    fi
+
+    if [ -L "$RC_D/rc4.d/S85vpnclient_init" ]; then
+	rm $RC_D/rc4.d/S85vpnclient_init
+	echo "Removed: $RC_D/rc4.d/S85vpnclient_init (VPN rc4.d link)"
+    fi
+
+    if [ -L "$RC_D/rc5.d/S85vpnclient_init" ]; then
+	rm $RC_D/rc5.d/S85vpnclient_init
+	echo "Removed: $RC_D/rc5.d/S85vpnclient_init (VPN rc5.d link)"
+    fi
+fi
+
+if [ -f "$INIT_D/vpnclient_init" ]; then
+	rm -f $INIT_D/vpnclient_init
+	echo "Removed: $INIT_D/vpnclient_init (VPN init script)"
+fi
+
+if [ -f "$INIT_D/vpnclient_init.old" ]; then
+	rm -f $INIT_D/vpnclient_init.old
+	echo "Removed: $INIT_D/vpnclient_init.old (VPN init script - backup)"
+fi
+
+if [ "$clean_profiles" = "true" ]; then
+ 	if [ -d "$CFGDIR" -a "$CFGDIR" != "/" ]; then
+        rm -rf ${CFGDIR}
+        echo "Removed: $CFGDIR (profiles, certificates, INI)"
+        rm ${OLD_CFGDIR}
+        echo "Removed: $OLD_CFGDIR (symlink)"
+	fi
+else
+	echo "Preserved: $CFGDIR (profiles, certificates, INI)"
+    echo "Preserved: $OLD_CFGDIR (symlink)"
+fi
+
+echo "Done."
+#
+# All is well
+#
+exit 0

@@ -1,0 +1,582 @@
+#!/usr/bin/env bash
+##########################################################################
+#           Copyright (c) 2004, Cisco Systems, All Rights Reserved
+###########################################################################
+#
+#  File:    vpn_install
+#  Date:    06/15/2001
+#
+###########################################################################
+#
+# linux VPN client installation script.
+#
+###########################################################################
+WHOAMI=`id | sed -e 's/(.*//'`
+if [ "$WHOAMI" != "uid=0" ] ; then
+	echo "Sorry, you need super user access to run this script."
+	exit 1
+fi
+echo "Cisco Systems VPN Client Version 4.8.02 (0030) Linux Installer"
+echo "Copyright (C) 1998-2006 Cisco Systems, Inc. All Rights Reserved."
+echo ""
+echo "By installing this product you agree that you have read the"
+echo "license.txt file (The VPN Client license) and will comply with" 
+echo "its terms. "
+echo ""
+PATH="${PATH}:/sbin:/usr/sbin:/usr/local/sbin"
+if [ -z "$LINKDIR" ]; then
+	LINKDIR=/usr/local/bin 
+fi
+
+#
+# Check for existence and validity of chkconfig
+#
+CHKCONFIG="chkconfig"
+if [ "0" = `"$CHKCONFIG" --list 2> /dev/null | wc -l` ]; then
+	CHKCONFIG=""
+fi
+
+#
+#  Print abort message on interupt.
+#
+trap 'echo; echo "Oh no! Installation Aborted!"; exit 1' 1 2 3 15
+
+#
+# Set up to do reads with possible shell escape and default assignment
+#
+function getvalue() {
+    ans='!'
+    local rp=$1
+    local dflt=$2
+   
+    printf "\n%s [%s]" "$rp" "$dflt"
+
+	while expr "X$ans" : "X!" >/dev/null; do
+		read ans
+		case "$ans" in
+			!)
+				sh
+				echo " "
+				echo $n "$rp $c"
+				;;
+			!*)
+				set `expr "X$ans" : "X!\(.*\)$"`
+				sh -c "$*"
+				echo " "
+				echo $n "$rp $c"
+				;;
+			esac
+	done
+
+	if [ -z "$ans" ]; then
+        ans="$dflt"
+    fi
+}
+function file_install()
+{
+    local file=$1
+    local destfile="$2/$1"
+    local mode=$3
+    local user=$4
+    local group=$5
+
+    echo "    $destfile"
+    cp -f $file $destfile
+    chown $user:$group $destfile
+    chmod $mode $destfile
+}
+MODULEDIR=/lib/modules/`uname -r`/CiscoVPN
+
+if [ -d /lib/modules/`uname -r`/build ]; then
+    KERNELSRCDIR="/lib/modules/`uname -r`/build"
+elif [ -d /usr/src/linux-2.4 ]; then
+    #redhat 7.
+	KERNELSRCDIR="/usr/src/linux-2.4"
+elif [ -d /usr/src/linux ]; then
+    #redhat 6.2
+	KERNELSRCDIR="/usr/src/linux"
+else
+	KERNELSRCDIR=""
+fi
+
+if [ -d /etc/init.d ]; then
+    INIT_D="/etc/init.d"
+elif [ -d /etc/rc.d/init.d ]; then
+    INIT_D="/etc/rc.d/init.d"
+elif [ -d /etc/rc.d ]; then
+    INIT_D="/etc/rc.d"
+else
+    INIT_D=""
+fi
+
+
+if [ -d /etc/rc3.d ]; then
+    RC_D="/etc"
+elif [ -d /etc/rc.d/rc3.d ]; then
+    RC_D="/etc/rc.d"
+elif [ -f "/etc/rc.d/rc.sysvinit" ]; then
+    #slackware can do runlevel scripts, but the directories aren't
+    #created by default
+    RC_D="/etc/rc.d"
+    CREATE_RC_DIRS=1
+else
+    RC_D=""
+fi
+
+#
+# Do this until we die or get a good answer
+#
+proceed=false
+
+while [ "$proceed" = "false" ];
+do
+	got_dir=false
+
+	while [ "$got_dir" = "false" ];
+	do
+		getvalue "Directory where binaries will be installed" "$LINKDIR"
+		the_dir=$ans
+
+		create_dir=
+
+		if [ ! -d $the_dir ]; then
+			getvalue "Directory \"$the_dir\" doesn't exist. Create ?" "y"
+
+			create_dir=$ans
+
+			case "$create_dir" in
+			y* | Y*)
+				got_dir=true
+				;;
+			*)
+				;;
+			esac
+		else
+			got_dir=true
+		fi
+	done
+
+	got_autostart=false
+
+	while [ "$got_autostart" = "false" ];
+	do
+        if [ -n "$CHKCONFIG" -o -n "$RC_D" ]; then
+		    dflt=yes
+        else
+		    dflt=no
+        fi
+		getvalue "Automatically start the VPN service at boot time" "$dflt"
+
+		the_autostart=$ans
+
+		case "$the_autostart" in
+		y* | Y*)
+			got_autostart=true
+			the_autostart=yes
+			;;
+		n* | N* )
+			got_autostart=true
+			the_autostart=no
+			;;
+		*)
+			;;
+		esac
+	done
+
+	the_autostart=$ans
+
+    if [ -z "$INIT_D" ]; then
+        got_dir=false
+        while [ $got_dir = false ];
+        do
+		    getvalue "Directory containing init scripts:" ""
+
+		    the_initdir=$ans
+		    if [ ! -d "$the_initdir" ]; then
+			    echo "Directory \"$the_initdir\" doesn't exist"
+		    else
+			    got_dir=true
+		    fi
+        done
+    fi
+    if [ -z "$CHKCONFIG"  -a -z "$RC_D" -a "$the_autostart" = "yes" ]; then
+	    got_dir=false
+	    while [ $got_dir = false ];
+	    do
+		getvalue "Directory containing runlevel directories (rcX.d):" \
+                         "$RC_D"
+
+		the_rcdir=$ans
+		if [ ! -d "$the_rcdir" ]; then
+		    echo "Directory \"$the_rcdir\" doesn't exist"
+		else
+		    got_dir=true
+		fi
+	    done
+    fi
+	echo
+	echo "In order to build the VPN kernel module, you must have the"
+	echo "kernel headers for the version of the kernel you are running."
+	echo
+    if [ -z "$KERNELSRCDIR" ]; then
+	    echo "For RedHat 6.x users these files are installed in /usr/src/linux by default"
+	    echo "For RedHat 7.x users these files are installed in /usr/src/linux-2.4 by default"
+        echo "For Suse 7.3 users these files are installed in /usr/src/linux-2.4.10.SuSE by default"
+    fi
+	got_srcdir=false
+	while [ "$got_srcdir" = "false" ];
+	do
+		getvalue "Directory containing linux kernel source code"\
+                         "$KERNELSRCDIR"
+
+		the_srcdir=$ans
+		if [ ! -d $the_srcdir ]; then
+			echo "Directory \"$the_srcdir\" doesn't exist"
+		else
+			got_srcdir=true
+		fi
+	done
+	echo ""
+	echo "* Binaries will be installed in \"$the_dir\"."
+	echo "* Modules will be installed in \"$MODULEDIR\"."
+	case "$the_autostart" in
+	y* | Y*)
+		echo "* The VPN service will be started AUTOMATICALLY at boot time."
+		;;
+	*)
+		echo "* The VPN service will *NOT* be started automatically at boot time."
+		;;
+	esac
+	echo "* Kernel source from \"$the_srcdir\" will be used to build the module."
+    if [ -z "$INIT_D" ]; then
+        echo "* Init script will be installed in \"$the_initdir\"."
+    fi
+
+    if [ -z "$CHKCONFIG" -a -n "$the_rcdir" -a "$the_autostart" = "yes" ]; then
+	    echo "* Runlevels will be set in \"$the_rcdir\"."
+    fi
+
+	getvalue "Is the above correct" "y"
+	
+	case "$ans" in
+	y*)
+		proceed=true
+		;;
+	*)
+		;;
+	esac
+done
+
+printf "\n"
+
+LINKDIR=$the_dir
+VPNCREATEDIR=$create_dir
+VPNAUTOSTART=$the_autostart
+KERNELSRCDIR=$the_srcdir
+
+if [ -z "$INIT_D" ]; then
+  INIT_D=$the_initdir
+fi
+
+if [ -z "$CHKCONFIG" -a -z "$RC_D" ]; then
+	RC_D=$the_rcdir
+fi
+
+if [ -f "$INIT_D/vpnclient_init" ]; then
+	sh $INIT_D/vpnclient_init stop
+	echo "Stopped: $INIT_D/vpnclient_init (VPN init script)"
+fi
+
+if [ ! -d $LINKDIR ]; then
+    echo "Create directory \"$LINKDIR\"."
+    mkdir -p  $LINKDIR
+	if [ -n "$status" ]; then
+		echo "FAILED to create directory \"$LINKDIR\"."
+		exit 1
+	fi
+fi
+
+# Copy version.h into the kernel src directory (Suse)
+if [ -r /boot/vmlinuz.version.h ]; then
+    if [ ! -r $KERNELSRCDIR/include/linux/version.h ]; then
+        if [ -d $KERNELSRCDIR/include/linux ]; then
+            echo "* Copying /boot/vmlinuz.version.h into the kernel source directory"
+            cp /boot/vmlinuz.version.h $KERNELSRCDIR/include/linux/version.h
+            if [ $? != 0 ]; then
+                echo "Unable to copy version.h into the kernel source directory!"
+                exit 1
+            fi
+        else
+            echo "Could not find the correct kernel header directory!"
+            echo "$KERNELSRCDIR/include/linux must exist!"
+            exit 1
+        fi
+    fi    
+fi
+#
+# Make module
+#
+case `uname -r` in
+2.[56].*)
+    MODULE_NAME=cisco_ipsec.ko
+    ;;
+*)
+    MODULE_NAME=cisco_ipsec
+    ;;
+esac    
+echo "Making module"
+sh ./driver_build.sh $KERNELSRCDIR
+if [ ! -f "./${MODULE_NAME}" ]; then
+	echo "Failed to make module \"${MODULE_NAME}\"."
+  	exit 1
+fi
+
+
+#
+# Copy module to right location
+#
+if [ ! -d $MODULEDIR ]; then
+	echo "Create module directory \"$MODULEDIR\"."
+	mkdir -p  $MODULEDIR
+fi
+
+echo "Copying module to directory \"$MODULEDIR\"."
+cp $MODULE_NAME $MODULEDIR
+
+PKGNAME=cisco-vpnclient
+PKGDIR=/opt/cisco-vpnclient
+CFGDIR=/etc/opt/cisco-vpnclient
+OLD_CFGDIR=/etc/CiscoSystemsVPNClient
+BINDIR="${PKGDIR}/bin"
+LIBDIR="${PKGDIR}/lib"
+INCDIR="${PKGDIR}/include"
+VPNGROUP="bin"
+
+#
+# Create start/stop script at right location
+#
+grep -qw "^${VPNGROUP}" /etc/group
+if [ $? -eq 0 ]; then
+    echo "Already have group '$VPNGROUP'"
+else
+    echo "Creating group '$VPNGROUP'"
+    groupadd $VPNGROUP
+fi
+echo
+
+echo "Creating start/stop script \"$INIT_D/vpnclient_init\"."
+for file in vpn vpn.old vpnclient_init vpnclient_init.old ; do
+    if [ -f $INIT_D/$file ]; then
+        rm -f $INIT_D/$file 
+    fi
+done
+file_install vpnclient_init $INIT_D 755 root root
+#
+# Enable start/stop script for some run levels
+#
+#
+# Unified Framework client
+if [ -n "$CHKCONFIG" ]; then
+    $CHKCONFIG --del vpnclient_init
+elif [ -n "$RC_D" ]; then
+    for runlevel in rc3.d rc4.d rc5.d ; do
+        if [ -f $RC_D/$runlevel/S85vpnclient_init ]; then
+            rm $RC_D/$runlevel/S85vpnclient_init
+        fi
+    done
+fi
+
+if [ -n "$RC_D" ]; then
+    for runlevel in rc3.d rc4.d rc5.d ; do
+        # old unity client
+        if [ -f $RC_D/$runlevel/S85vpnclient ]; then
+            rm $RC_D/$runlevel/S85vpnclient
+        fi
+        # VPN 5000 client
+        if [ -f $RC_D/$runlevel/S85vpn ]; then
+            rm $RC_D/$runlevel/S85vpn
+        fi
+    done
+fi
+
+case "$VPNAUTOSTART" in
+y* | Y*)
+	echo "Enabling start/stop script for run level 3,4 and 5."
+	if [ -n "$CHKCONFIG" ]; then
+	    $CHKCONFIG --add vpnclient_init
+	    $CHKCONFIG vpnclient_init on
+	else
+        if [ -n "$CREATE_RC_DIRS" ]; then
+            for runlevel in 3 4 5 ; do
+                dir="${RC_D}/rc${runlevel}.d"
+                if [ ! -d "$dir" ]; then
+                    mkdir "$dir"
+                    chmod 0755 "$dir"
+                fi
+            done
+        fi
+     
+	    ln -s $INIT_D/vpnclient_init $RC_D/rc3.d/S85vpnclient_init
+	    ln -s $INIT_D/vpnclient_init $RC_D/rc4.d/S85vpnclient_init
+	    ln -s $INIT_D/vpnclient_init $RC_D/rc5.d/S85vpnclient_init
+	fi
+	;;
+
+*)
+	if [ -n "$CHKCONFIG" ]; then
+	    $CHKCONFIG --add vpnclient_init
+	    $CHKCONFIG vpnclient_init off
+	fi
+	;;
+esac
+
+
+#make directories
+mkdir -p "${BINDIR}"
+mkdir -p "${LIBDIR}"
+mkdir -p "${INCDIR}"
+chmod 755 -R "$PKGDIR"
+
+if [ -d "$OLD_CFGDIR" -a ! -h "$OLD_CFGDIR" ]; then
+    echo "Moving global config from $OLD_CFGDIR to $CFGDIR"
+    mkdir -p ${CFGDIR}
+    mv ${OLD_CFGDIR}/* "${CFGDIR}"
+    rmdir $OLD_CFGDIR
+    ln -s ${CFGDIR} ${OLD_CFGDIR}
+    CFG_CREATED=1
+elif [ ! -d $CFGDIR ]; then
+    echo "Creating global config $CFGDIR"
+    mkdir -p "${CFGDIR}/Certificates"
+    mkdir -p "${CFGDIR}/Profiles"
+    ln -s ${CFGDIR} ${OLD_CFGDIR}
+    CFG_CREATED=1
+fi
+
+echo ""
+echo "Installing license.txt (VPN Client license) in \"$PKGDIR/\":"
+file_install license.txt $PKGDIR 644 'root' $VPNGROUP 
+
+newprofiles=""
+replacedprofiles=""
+echo ""
+echo "Installing bundled user profiles in \"$CFGDIR/Profiles/\":"
+for file in `ls *.pcf`; do
+        dst_file="${CFGDIR}/Profiles/${file}"
+	if [ -f "${dst_file}" ]; then
+        replacedprofiles=$replacedprofiles$file
+        mv "${dst_file}" "${dst_file}.old"
+    else
+	    newprofiles=$newprofiles$file
+	fi
+	cp "${file}" "${dst_file}"
+done
+
+#
+# Replace .pcf with spaces for desired output format
+#
+
+newprofiles=`echo ${newprofiles}|sed "s#.pcf# #g"`
+replacedprofiles=`echo ${replacedprofiles}|sed "s#.pcf# #g"`
+
+if [ -n "$newprofiles" ]; then
+		echo "* New Profiles     : $newprofiles"
+fi
+
+if [ -n "$replacedprofiles" ]; then
+		echo "* Replaced Profiles: $replacedprofiles"
+fi
+if [ ! -e "${CFGDIR}/vpnclient.ini" ]; then
+    cp vpnclient.ini $CFGDIR
+fi
+#
+# Copy files to right location
+#
+BINARIES="vpnclient cisco_cert_mgr ipseclog"
+echo ""
+echo "Copying binaries to directory \"$BINDIR\"."
+echo "Adding symlinks to \"$LINKDIR\"."
+for file in $BINARIES; do
+    rm -f $LINKDIR/$file
+    file_install $file $BINDIR 0111 'root' $VPNGROUP
+    ln -s $BINDIR/$file $LINKDIR/$file
+done
+
+SETUID_BINARIES="cvpnd"
+echo "Copying setuid binaries to directory \"$BINDIR\"."
+for file in $SETUID_BINARIES; do
+    rm -f $LINKDIR/$file
+    file_install $file $BINDIR 4111 'root' $VPNGROUP
+done
+
+LIBS="libvpnapi.so"
+echo "Copying libraries to directory \"$LIBDIR\"."
+for file in $LIBS; do
+    file_install $file $LIBDIR 0555 'root' $VPNGROUP
+done
+
+echo "Copying header files to directory \"$INCDIR\"."
+HEADERS="vpnapi.h"
+for file in $HEADERS; do
+    file_install $file $INCDIR 0444 'root' $VPNGROUP
+done
+
+#
+# Make sure we have the right permissions
+#
+
+echo ""
+echo "Setting permissions."
+echo "    ${BINDIR}/cvpnd (setuid root)"
+echo "    ${PKGDIR} (group ${VPNGROUP} readable)"
+if [ -n "$CFG_CREATED"  ]; then
+    echo "    ${CFGDIR} (group ${VPNGROUP} readable)"
+    echo "    ${CFGDIR}/Profiles (group ${VPNGROUP} readable)"
+    echo "    ${CFGDIR}/Certificates (group ${VPNGROUP} readable)"
+    chgrp -R $VPNGROUP $CFGDIR
+    chmod 0777 "$CFGDIR"
+    chmod 0666 "$CFGDIR/vpnclient.ini"
+    chmod 0777 "$CFGDIR/Certificates"
+    chmod 0777 "$CFGDIR/Profiles"
+    chmod 0666 $CFGDIR/Profiles/*.pcf
+else
+    echo "    ${CFGDIR} (permissions not changed)"
+fi
+echo "* You may wish to change these permissions to restrict access to root."
+
+#all files owned by the vpn group
+chgrp "${VPNGROUP}" "${PKGDIR}"
+chgrp "${VPNGROUP}" "${BINDIR}"
+chgrp "${VPNGROUP}" "${LIBDIR}"
+chgrp "${VPNGROUP}" "${INCDIR}"
+
+
+#
+# Install the packaged root cert
+#
+CERTMGR=${BINDIR}"/cisco_cert_mgr"
+ROOTCERTFILENAME="rootcert"
+ROOTCERT="./"${ROOTCERTFILENAME}
+if [ -f ${ROOTCERT} -a -r ./${ROOTCERT} -a -x ${CERTMGR} ]; then
+    ${CERTMGR} -R -op import -f ${ROOTCERTFILENAME} > /dev/null 2>/dev/null
+    if [ $? = 0 ]; then
+        echo "* The packaged Root Certificate was imported successfully."
+    else
+        echo "* Failed to import the packaged Root Certificate."
+    fi
+fi
+    
+echo "* You must run \"$INIT_D/vpnclient_init start\" before using the client."
+case "$VPNAUTOSTART" in
+y* | Y*)
+	echo "* This script will be run AUTOMATICALLY every time you reboot your computer."
+	;;
+n* | N*)
+	echo "* You will need to run this script every time you reboot your computer."
+	;;
+*)
+	;;
+esac
+#
+# All is well
+#
+exit 0
