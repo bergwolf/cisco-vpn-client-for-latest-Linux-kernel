@@ -31,6 +31,10 @@ typedef struct {
                           struct packet_type *);
 #endif
     int (*InjectSend) (struct sk_buff * skb, struct net_device * dev);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,29)
+    struct net_device_ops stack_netops;
+    const struct net_device_ops *saved_netops;
+#endif
 
     int recv_real_hh_len;
     int send_real_hh_len;

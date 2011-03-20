@@ -115,6 +115,13 @@ static struct net_device interceptor_dev = {
     .init = interceptor_init
 };
 #endif
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,29)
+static struct net_device_ops netdev_ops = {
+    .ndo_start_xmit = interceptor_tx,
+    .ndo_get_stats = interceptor_stats,
+    .ndo_do_ioctl = interceptor_ioctl
+};
+#endif
 
 static struct notifier_block interceptor_notifier = {
     .notifier_call = handle_netdev_event,
@@ -129,9 +136,13 @@ interceptor_init(struct net_device *dev)
 {
     ether_setup(dev);
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,29)
+    dev->netdev_ops = &netdev_ops;
+#else
     dev->hard_start_xmit = interceptor_tx;
     dev->get_stats = interceptor_stats;
     dev->do_ioctl = interceptor_ioctl;
+#endif
 
     dev->mtu = ETH_DATA_LEN-MTU_REDUCTION;
     kernel_memcpy(dev->dev_addr, interceptor_eth_addr,ETH_ALEN);
@@ -268,8 +279,17 @@ add_netdev(struct net_device *dev)
     Bindings[i].original_mtu = dev->mtu;
 
     /*replace the original send function with our send function */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,29)
+    Bindings[i].saved_netops = dev->netdev_ops;
+    Bindings[i].InjectSend = dev->netdev_ops->ndo_start_xmit;
+    memcpy(&Bindings[i].stack_netops, dev->netdev_ops,
+	   sizeof(Bindings[i].stack_netops));
+    Bindings[i].stack_netops.ndo_start_xmit = replacement_dev_xmit;
+    dev->netdev_ops = &Bindings[i].stack_netops;
+#else
     Bindings[i].InjectSend = dev->hard_start_xmit;
     dev->hard_start_xmit = replacement_dev_xmit;
+#endif
 
     /*copy in the ip packet handler function and packet type struct */
     Bindings[i].InjectReceive = original_ip_handler.orig_handler_func;
@@ -291,7 +311,11 @@ remove_netdev(struct net_device *dev)
     if (b)
     {   
         rc = 0;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,29)
+        dev->netdev_ops = b->saved_netops;
+#else
         dev->hard_start_xmit = b->InjectSend;
+#endif
         kernel_memset(b, 0, sizeof(BINDING));
     }
     else
